@@ -1,5 +1,7 @@
 package net.jvw.batchdemo;
 
+import java.util.StringJoiner;
+
 public class Product {
 
   private long id;
@@ -51,7 +53,11 @@ public class Product {
 
   @Override
   public String toString() {
-    return String.format("%s\n" +
-        "\"%s\",%.2f,%d,\"%s\"", id, id, price, stock, name);
+    return new StringJoiner(", ", Product.class.getSimpleName() + "[", "]")
+        .add("id=" + id)
+        .add("price=" + price)
+        .add("stock=" + stock)
+        .add("name='" + name + "'")
+        .toString();
   }
 }

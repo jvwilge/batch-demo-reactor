@@ -2,6 +2,7 @@ package net.jvw.batchdemo;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.apache.http.HttpHost;
+import org.elasticsearch.action.ActionListener;
 import org.elasticsearch.action.get.GetRequest;
 import org.elasticsearch.action.get.GetResponse;
 import org.elasticsearch.action.get.MultiGetRequest;
@@ -16,12 +17,14 @@ import org.elasticsearch.common.xcontent.XContentType;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Repository;
+import reactor.core.publisher.MonoSink;
 
 import javax.annotation.PostConstruct;
 import javax.annotation.PreDestroy;
 import java.io.IOException;
 import java.util.Arrays;
 import java.util.List;
+import java.util.Objects;
 import java.util.stream.Collectors;
 
 @Repository
@@ -30,7 +33,7 @@ public class ProductRepository {
   private static final Logger LOG = LoggerFactory.getLogger(ProductRepository.class);
 
   private static final String INDEX_NAME = "product";
-  public static final String DOC_TYPE = "_doc";
+  private static final String DOC_TYPE = "_doc";
   private RestHighLevelClient client;
 
   private ObjectMapper mapper;
@@ -62,36 +65,50 @@ public class ProductRepository {
     }
   }
 
-
-  public List<Product> getBatch(List<Long> ids) throws RuntimeException {
-    LOG.debug("getting batch: {}", ids);
+  public void getBatchAsync(List<Long> ids, MonoSink<List<Product>> monoSink) throws RuntimeException {
+    LOG.debug("getting async batch: {}", ids);
     try {
       MultiGetRequest multiGetRequest = new MultiGetRequest();
-
       ids.forEach(id -> multiGetRequest.add(INDEX_NAME, DOC_TYPE, "" + id));
 
-      final MultiGetResponse response = client.mget(multiGetRequest, RequestOptions.DEFAULT);
+      ActionListener<MultiGetResponse> actionListener = new ActionListener<MultiGetResponse>() {
+        @Override
+        public void onResponse(MultiGetResponse multiGetItemResponses) {
+          final List<Product> result = Arrays.stream(multiGetItemResponses.getResponses()).map(multiGetItemResponse -> {
 
-      return Arrays.stream(response.getResponses()).map(multiGetItemResponse -> {
+            try {
+              final byte[] sourceAsBytes = multiGetItemResponse.getResponse().getSourceAsBytes();
+              if (sourceAsBytes == null) {
+                //monoSink.error(new RuntimeException("source is null (ids: " + ids + ")"));
+                return null;
+              }
+              return mapper.readValue(sourceAsBytes, Product.class);
+            } catch (IOException e) {
+              LOG.error("boom", e);
+            }
+            return null;
 
-        try {
-          return mapper.readValue(multiGetItemResponse.getResponse().getSourceAsBytes(), Product.class);
-        } catch (IOException e) {
-          LOG.error("boom", e);
+          })
+              .filter(Objects::nonNull)
+              .collect(Collectors.toList());
+          monoSink.success(result);
         }
-        return new Product();
 
-      }).collect(Collectors.toList());
-
-
-    } catch (IOException e) {
+        @Override
+        public void onFailure(Exception e) {
+          LOG.error("failure: ", e);
+          monoSink.error(e);
+        }
+      };
+      client.mgetAsync(multiGetRequest, RequestOptions.DEFAULT, actionListener);
+    } catch (Exception e) {
       throw new RuntimeException(e);
     }
-
   }
 
 
   public void insert(Product product) throws RuntimeException {
+    LOG.debug("inserting {}", product);
     try {
       final IndexRequest indexRequest = Requests.indexRequest(INDEX_NAME).type(DOC_TYPE);
       indexRequest.source(mapper.writeValueAsString(product), XContentType.JSON);

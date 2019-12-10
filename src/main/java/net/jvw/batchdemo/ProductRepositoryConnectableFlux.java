@@ -8,20 +8,23 @@ import reactor.core.publisher.ConnectableFlux;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.FluxSink;
 import reactor.core.publisher.Mono;
+import reactor.core.scheduler.Scheduler;
+import reactor.core.scheduler.Schedulers;
 
 import javax.annotation.PostConstruct;
 import javax.annotation.PreDestroy;
 import java.time.Duration;
+import java.util.List;
 import java.util.concurrent.atomic.AtomicReference;
 
 @Service
 public class ProductRepositoryConnectableFlux {
 
   private static final Logger LOG = LoggerFactory.getLogger(ProductRepositoryConnectableFlux.class);
+  public static final Scheduler SCHEDULER = Schedulers.newBoundedElastic(8, 1000, "nbe-jvw");
 
   private ConnectableFlux<Product> connectableFlux;
   private Disposable connectionToConnectableFlux;
-
   private AtomicReference<FluxSink<Long>> fluxSink = new AtomicReference<>();
 
   private ProductRepository repository;
@@ -32,11 +35,18 @@ public class ProductRepositoryConnectableFlux {
 
   @PostConstruct
   public void init() {
-    connectableFlux = Flux.<Long>create(fluxSink::set)
-        .bufferTimeout(3, Duration.ofMillis(5000))
+
+
+    connectableFlux = Flux.<Long>create(fluxSink::set, FluxSink.OverflowStrategy.ERROR)
+        .bufferTimeout(8, Duration.ofMillis(500))
         .doOnNext(ids -> LOG.debug("processing buffer of size {}", ids.size()))
-        .map(ids->repository.getBatch(ids))
-        .concatMap(Flux::fromIterable)
+        .concatMap(ids -> { // don't need flatMap so don't use it to prevent exponential explosion of tasks
+
+          return Mono.<List<Product>>create(sink -> repository.getBatchAsync(ids, sink))
+              .subscribeOn(SCHEDULER); // executes on reactor-http-nio when not provided, probably not a problem
+
+        })
+        .flatMap(Flux::fromIterable) //TODO of hier ook flatmap?
         .doOnCancel(() -> LOG.debug("Ccancelling"))
         .doOnComplete(() -> LOG.debug("Ccomplete"))
         .doOnTerminate(() -> LOG.debug("Cterminate"))
@@ -55,16 +65,23 @@ public class ProductRepositoryConnectableFlux {
   }
 
   public Mono<Product> get(Long id) {
-    LOG.debug("sending {} to fluxSink", id);
-    //subscribe first, subscription might arrive after id is sent
-    final Mono<Product> result = Mono.<Product>create(productMonoSink -> {
-      connectableFlux.filter(product -> id.equals(product.getId()))
-          .take(1)
-          .subscribe();
-    });
 
-    fluxSink.get().next(id);
-    return result;
+    final Mono<Product> productMono = connectableFlux
+        .filter(product -> id.equals(product.getId())) // connectableFlux contains all results from batch, filter on id
+        .next() // basically a take(1) that converts to mono : https://stackoverflow.com/questions/42021559/convert-from-flux-to-mono
+        //        .doOnSubscribe(subscription -> LOG.debug("subscribing: {}", subscription))
+        //        .doOnTerminate(() -> LOG.debug("terminate"))
+        .doOnCancel(() -> LOG.debug("cancel"))
+        //        .subscribeOn(SCHEDULER)
+        //                .doOnComplete(() -> LOG.debug("complete"))
+        //        .doOnNext(product -> LOG.debug("taking shit: {}", product));
+        //        .subscribe();// subscribe is nodig omdat dit een nested mono is
+        ;
+
+    //    LOG.debug("sending {} to fluxSink", id);
+    fluxSink.get().next(id); // send id to connectableFlux so it will be included in a batch
+
+    return productMono;
   }
 
 }

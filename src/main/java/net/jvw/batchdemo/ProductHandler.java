@@ -1,6 +1,7 @@
 package net.jvw.batchdemo;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.http.MediaType;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PutMapping;
@@ -11,20 +12,21 @@ import org.springframework.web.reactive.function.BodyInserters;
 import org.springframework.web.reactive.function.server.ServerResponse;
 import reactor.core.publisher.Mono;
 
+import java.time.Duration;
+
 @RestController()
 @RequestMapping("/product")
 public class ProductHandler {
+
+  private static final Logger LOG = LoggerFactory.getLogger(ProductHandler.class);
 
   private ProductRepository repository;
 
   private ProductRepositoryConnectableFlux repositoryConnectableFlux;
 
-  private ObjectMapper mapper;
-
-  public ProductHandler(ProductRepository repository, ProductRepositoryConnectableFlux repositoryConnectableFlux, ObjectMapper mapper) {
+  public ProductHandler(ProductRepository repository, ProductRepositoryConnectableFlux repositoryConnectableFlux) {
     this.repository = repository;
     this.repositoryConnectableFlux = repositoryConnectableFlux;
-    this.mapper = mapper;
   }
 
   @GetMapping
@@ -35,16 +37,28 @@ public class ProductHandler {
 
   @PutMapping
   public Mono<Product> upsert(@RequestBody ProductUpdate update) {
-    return
-        //        Mono.just(update.getId())
-        //        .map(repository::get)
-        repositoryConnectableFlux.get(update.getId())
-            .doOnNext(product -> {
-              product.setPrice(Math.max(0, product.getPrice() + update.getPriceChange()));
-              product.setStock(Math.max(0, product.getStock() + update.getStockChange()));
-            })
-            .doOnNext(repository::insert);
-  }
 
+    boolean withConnectableFlux = true;
+
+    Mono<Product> mono = null;
+
+    if (withConnectableFlux) {
+      mono = repositoryConnectableFlux.get(update.getId()).timeout(Duration.ofMillis(5000));
+    } else {
+      mono = Mono.just(update.getId())
+          .map(repository::get)
+          .subscribeOn(ProductRepositoryConnectableFlux.SCHEDULER)
+      ;
+    }
+
+    return mono.doOnNext(product -> {
+      LOG.debug("transforming product: {}", product);
+      product.setPrice(Math.max(0, product.getPrice() + update.getPriceChange()));
+      product.setStock(Math.max(0, product.getStock() + update.getStockChange()));
+    })
+        .publishOn(ProductRepositoryConnectableFlux.SCHEDULER) // als je deze weglaat blaast de boel direct op
+        .doOnNext(repository::insert)
+        ;
+  }
 
 }
