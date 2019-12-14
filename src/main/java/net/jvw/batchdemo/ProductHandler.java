@@ -52,12 +52,13 @@ public class ProductHandler {
     }
 
     return mono.doOnNext(product -> {
-      LOG.debug("transforming product: {}", product);
+      LOG.trace("transforming product: {}", product);
       product.setPrice(Math.max(0, product.getPrice() + update.getPriceChange()));
       product.setStock(Math.max(0, product.getStock() + update.getStockChange()));
     })
         .publishOn(ProductRepositoryConnectableFlux.SCHEDULER) // als je deze weglaat blaast de boel direct op
-        .doOnNext(repository::insert)
+        .doOnNext(product ->
+            Mono.<Product>create(sink -> repository.updateAsync(product, sink)))
         ;
   }
 

@@ -8,6 +8,8 @@ import org.elasticsearch.action.get.GetResponse;
 import org.elasticsearch.action.get.MultiGetRequest;
 import org.elasticsearch.action.get.MultiGetResponse;
 import org.elasticsearch.action.index.IndexRequest;
+import org.elasticsearch.action.update.UpdateRequest;
+import org.elasticsearch.action.update.UpdateResponse;
 import org.elasticsearch.client.RequestOptions;
 import org.elasticsearch.client.Requests;
 import org.elasticsearch.client.RestClient;
@@ -116,6 +118,23 @@ public class ProductRepository {
     } catch (IOException e) {
       throw new RuntimeException(e);
     }
+  }
+
+
+  public void updateAsync(Product product, MonoSink<Product> sink) throws RuntimeException {
+    LOG.debug("updating {}", product);
+    final UpdateRequest updateRequest = new UpdateRequest(INDEX_NAME, DOC_TYPE, product.getId() + "");
+    client.updateAsync(updateRequest, RequestOptions.DEFAULT, new ActionListener<UpdateResponse>() {
+      @Override
+      public void onResponse(UpdateResponse response) {
+        sink.success(product);
+      }
+
+      @Override
+      public void onFailure(Exception e) {
+        sink.error(e);
+      }
+    });
   }
 
 

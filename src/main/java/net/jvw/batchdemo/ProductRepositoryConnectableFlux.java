@@ -43,10 +43,12 @@ public class ProductRepositoryConnectableFlux {
         .concatMap(ids -> { // don't need flatMap so don't use it to prevent exponential explosion of tasks
 
           return Mono.<List<Product>>create(sink -> repository.getBatchAsync(ids, sink))
-              .subscribeOn(SCHEDULER); // executes on reactor-http-nio when not provided, probably not a problem
+//              .subscribeOn(SCHEDULER) // executes on reactor-http-nio when not provided, this is correct. enabling this line will break things
+          ;
 
         })
-        .flatMap(Flux::fromIterable) //TODO of hier ook flatmap?
+        .publishOn(SCHEDULER)
+        .flatMap(Flux::fromIterable, 8)
         .doOnCancel(() -> LOG.debug("Ccancelling"))
         .doOnComplete(() -> LOG.debug("Ccomplete"))
         .doOnTerminate(() -> LOG.debug("Cterminate"))
