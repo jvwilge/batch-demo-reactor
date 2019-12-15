@@ -1,5 +1,6 @@
 package net.jvw.batchdemo;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.apache.http.HttpHost;
 import org.elasticsearch.action.ActionListener;
@@ -8,8 +9,7 @@ import org.elasticsearch.action.get.GetResponse;
 import org.elasticsearch.action.get.MultiGetRequest;
 import org.elasticsearch.action.get.MultiGetResponse;
 import org.elasticsearch.action.index.IndexRequest;
-import org.elasticsearch.action.update.UpdateRequest;
-import org.elasticsearch.action.update.UpdateResponse;
+import org.elasticsearch.action.index.IndexResponse;
 import org.elasticsearch.client.RequestOptions;
 import org.elasticsearch.client.Requests;
 import org.elasticsearch.client.RestClient;
@@ -122,19 +122,25 @@ public class ProductRepository {
 
 
   public void updateAsync(Product product, MonoSink<Product> sink) throws RuntimeException {
-    LOG.debug("updating {}", product);
-    final UpdateRequest updateRequest = new UpdateRequest(INDEX_NAME, DOC_TYPE, product.getId() + "");
-    client.updateAsync(updateRequest, RequestOptions.DEFAULT, new ActionListener<UpdateResponse>() {
-      @Override
-      public void onResponse(UpdateResponse response) {
-        sink.success(product);
-      }
+    try {
+      LOG.debug("updating {}", product);
+      final IndexRequest indexRequest = new IndexRequest(INDEX_NAME, DOC_TYPE, product.getId() + "");
+      indexRequest.source(mapper.writeValueAsString(product), XContentType.JSON);
+      client.indexAsync(indexRequest, RequestOptions.DEFAULT, new ActionListener<IndexResponse>() {
+        @Override
+        public void onResponse(IndexResponse response) {
+          LOG.debug("response: {}", response );
+          sink.success(product);
+        }
 
-      @Override
-      public void onFailure(Exception e) {
-        sink.error(e);
-      }
-    });
+        @Override
+        public void onFailure(Exception e) {
+          sink.error(e);
+        }
+      });
+    } catch (JsonProcessingException e) {
+      sink.error(e);
+    }
   }
 
 

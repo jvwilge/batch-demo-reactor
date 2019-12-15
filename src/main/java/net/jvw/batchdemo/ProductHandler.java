@@ -11,6 +11,8 @@ import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.reactive.function.BodyInserters;
 import org.springframework.web.reactive.function.server.ServerResponse;
 import reactor.core.publisher.Mono;
+import reactor.core.scheduler.Scheduler;
+import reactor.core.scheduler.Schedulers;
 
 import java.time.Duration;
 
@@ -24,6 +26,8 @@ public class ProductHandler {
 
   private ProductRepositoryConnectableFlux repositoryConnectableFlux;
 
+  public static final Scheduler NBE_SCHEDULER = Schedulers.newBoundedElastic(10, 10_000, "nbe-jvw");
+
   public ProductHandler(ProductRepository repository, ProductRepositoryConnectableFlux repositoryConnectableFlux) {
     this.repository = repository;
     this.repositoryConnectableFlux = repositoryConnectableFlux;
@@ -35,30 +39,43 @@ public class ProductHandler {
         .body(BodyInserters.fromObject("Hello, Spring!"));
   }
 
+  public Mono<Product> upsertClassic(@RequestBody ProductUpdate update) {
+    //    return Mono.just(update.getId())
+    //        .map(repository::get)
+    //        .subscribeOn(NBE_SCHEDULER).doOnNext(product -> {
+    //          LOG.trace("transforming product: {}", product);
+    //          product.setPrice(Math.max(0, product.getPrice() + update.getPriceChange()));
+    //          product.setStock(Math.max(0, product.getStock() + update.getStockChange()));
+    //        })
+    //        .publishOn(NBE_SCHEDULER) // als je deze weglaat blaast de boel direct op
+    //        .doOnNext(product ->
+    //            Mono.<Product>create(sink -> repository.updateAsync(product, sink)).subscribe())
+    //        ;
+    return Mono.empty();
+  }
+
   @PutMapping
   public Mono<Product> upsert(@RequestBody ProductUpdate update) {
 
-    boolean withConnectableFlux = true;
+    LOG.debug("upsert");
 
-    Mono<Product> mono = null;
-
-    if (withConnectableFlux) {
-      mono = repositoryConnectableFlux.get(update.getId()).timeout(Duration.ofMillis(5000));
-    } else {
-      mono = Mono.just(update.getId())
-          .map(repository::get)
-          .subscribeOn(ProductRepositoryConnectableFlux.SCHEDULER)
-      ;
-    }
-
-    return mono.doOnNext(product -> {
-      LOG.trace("transforming product: {}", product);
-      product.setPrice(Math.max(0, product.getPrice() + update.getPriceChange()));
-      product.setStock(Math.max(0, product.getStock() + update.getStockChange()));
-    })
-        .publishOn(ProductRepositoryConnectableFlux.SCHEDULER) // als je deze weglaat blaast de boel direct op
-        .doOnNext(product ->
-            Mono.<Product>create(sink -> repository.updateAsync(product, sink)))
+    return repositoryConnectableFlux.get(update.getId())
+        .publishOn(NBE_SCHEDULER) // 15-dec-19 @ 16:58 -> otherwise prcf
+        .timeout(Duration.ofMillis(5000))
+        .doOnNext(product -> {
+          LOG.trace("transforming product: {}", product);
+          product.setPrice(Math.max(0, product.getPrice() + update.getPriceChange()));
+          product.setStock(Math.max(0, product.getStock() + update.getStockChange()));
+        })
+        //        .publishOn(NBE_SCHEDULER) // als je deze weglaat blaast de boel direct op
+        .flatMap(product ->
+             Mono
+                .<Product>create(sink -> {
+                  repository.updateAsync(product, sink);
+                })
+                .publishOn(NBE_SCHEDULER) // 15-dec-19 @ 16:52 jump back after update
+        )
+        .doOnNext(product -> {})
         ;
   }
 
