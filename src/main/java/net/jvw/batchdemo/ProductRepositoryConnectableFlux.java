@@ -8,8 +8,6 @@ import reactor.core.publisher.ConnectableFlux;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.FluxSink;
 import reactor.core.publisher.Mono;
-import reactor.core.scheduler.Scheduler;
-import reactor.core.scheduler.Schedulers;
 
 import javax.annotation.PostConstruct;
 import javax.annotation.PreDestroy;
@@ -21,8 +19,6 @@ import java.util.concurrent.atomic.AtomicReference;
 public class ProductRepositoryConnectableFlux {
 
   private static final Logger LOG = LoggerFactory.getLogger(ProductRepositoryConnectableFlux.class);
-
-  private static final Scheduler PRCF_SCHEDULER = Schedulers.newBoundedElastic(1, 10_000, "prcf"); //only need 1 thread here
 
   private ConnectableFlux<Product> connectableFlux;
   private Disposable connectionToConnectableFlux;
@@ -37,30 +33,21 @@ public class ProductRepositoryConnectableFlux {
   @PostConstruct
   public void init() {
 
-
     connectableFlux = Flux.<Long>create(fluxSink::set, FluxSink.OverflowStrategy.ERROR)
         .bufferTimeout(5, Duration.ofMillis(50))
         .doOnNext(ids -> LOG.debug("processing buffer of size {}", ids.size()))
-        .concatMap(ids -> { // don't need flatMap so don't use it to prevent exponential explosion of tasks
-
-          return Mono.<List<Product>>create(
-              sink -> repository.getBatchAsync(ids, sink)
-          )
-          ;
-
-        })
-//        .publishOn(PRCF_SCHEDULER) // 15-dec-19 @ 16:21 This one is needed to jump out of `I/O dispatcher` thread
-        .flatMap(Flux::fromIterable, 1)
-        .doOnCancel(() -> LOG.debug("Ccancelling"))
-        .doOnComplete(() -> LOG.debug("Ccomplete"))
-        .doOnTerminate(() -> LOG.debug("Cterminate"))
-        .doOnError(throwable -> LOG.error("Boem: ", throwable))
+        .concatMap(ids ->
+            Mono.<List<Product>>create(sink -> {
+              repository.getBatchAsync(ids, sink);
+            })
+        )
+        .flatMap(Flux::fromIterable)
         .publish();
 
     // https://www.slideshare.net/Pivotal/reactive-programming-with-pivotals-reactor slide 20
     connectionToConnectableFlux = connectableFlux.connect(); // start pumping, with or without subscribers
     LOG.info("Connectable flux is connected");
-    //    connectableFlux.subscribe(); //TODO probably not needed
+    //    connectableFlux.subscribe(); // don't need a subscribe here since there will come a lot of short lived subsribers
   }
 
   @PreDestroy
@@ -70,23 +57,14 @@ public class ProductRepositoryConnectableFlux {
 
   public Mono<Product> get(Long id) {
 
-
-    final Mono<Product> productMono = connectableFlux
+    return connectableFlux
         .filter(product -> id.equals(product.getId())) // connectableFlux contains all results from batch, filter on id
         .next() // basically a take(1) that converts to mono : https://stackoverflow.com/questions/42021559/convert-from-flux-to-mono
-        //        .doOnSubscribe(subscription -> LOG.debug("subscribing: {}", subscription))
-        //        .doOnTerminate(() -> LOG.debug("terminate"))
-        .doOnCancel(() -> LOG.debug("cancel"))
-//                .subscribeOn(PRCF_SCHEDULER) // enabling this one creates timeout
-        //                .doOnComplete(() -> LOG.debug("complete"))
-        //        .doOnNext(product -> LOG.debug("taking shit: {}", product));
-        //        .subscribe();// subscribe is nodig omdat dit een nested mono is
-        ;
-
-    //    LOG.debug("sending {} to fluxSink", id);
-
-    fluxSink.get().next(id); // send id to connectableFlux so it will be included in a batch
-    return productMono;
+        .doOnSubscribe(ignore -> {
+          // send id to connectableFlux so it will be included in a batch
+          // send id in onSubscribe or otherwise the result might arrive before the actual subscribe()
+          fluxSink.get().next(id);
+        });
   }
 
 }
