@@ -32,8 +32,7 @@ public class ProductRepositoryConnectableFlux {
 
   @PostConstruct
   public void init() {
-
-    connectableFlux = Flux.<Long>create(fluxSink::set, FluxSink.OverflowStrategy.ERROR)
+    connectableFlux = Flux.create(fluxSink::set, FluxSink.OverflowStrategy.ERROR)
         .bufferTimeout(5, Duration.ofMillis(50))
         .doOnNext(ids -> LOG.debug("processing buffer of size {}", ids.size()))
         .concatMap(ids ->
@@ -56,7 +55,6 @@ public class ProductRepositoryConnectableFlux {
   }
 
   public Mono<Product> get(Long id) {
-
     return connectableFlux
         .filter(product -> id.equals(product.getId())) // connectableFlux contains all results from batch, filter on id
         .next() // basically a take(1) that converts to mono : https://stackoverflow.com/questions/42021559/convert-from-flux-to-mono

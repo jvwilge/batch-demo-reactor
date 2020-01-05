@@ -81,7 +81,6 @@ public class ProductRepository {
             try {
               final byte[] sourceAsBytes = multiGetItemResponse.getResponse().getSourceAsBytes();
               if (sourceAsBytes == null) {
-                //monoSink.error(new RuntimeException("source is null (ids: " + ids + ")"));
                 return null;
               }
               return mapper.readValue(sourceAsBytes, Product.class);
@@ -129,7 +128,7 @@ public class ProductRepository {
       client.indexAsync(indexRequest, RequestOptions.DEFAULT, new ActionListener<IndexResponse>() {
         @Override
         public void onResponse(IndexResponse response) {
-          LOG.debug("response: {}", response );
+          LOG.debug("response: {}", response);
           sink.success(product);
         }
 
