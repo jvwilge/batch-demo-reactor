@@ -39,7 +39,7 @@ public class ProductRepositoryConnectableFlux {
 
 
     connectableFlux = Flux.<Long>create(fluxSink::set, FluxSink.OverflowStrategy.ERROR)
-        .bufferTimeout(20, Duration.ofMillis(500))
+        .bufferTimeout(5, Duration.ofMillis(50))
         .doOnNext(ids -> LOG.debug("processing buffer of size {}", ids.size()))
         .concatMap(ids -> { // don't need flatMap so don't use it to prevent exponential explosion of tasks
 
@@ -49,7 +49,7 @@ public class ProductRepositoryConnectableFlux {
           ;
 
         })
-        .publishOn(PRCF_SCHEDULER) // 15-dec-19 @ 16:21 This one is needed to jump out of `I/O dispatcher` thread
+//        .publishOn(PRCF_SCHEDULER) // 15-dec-19 @ 16:21 This one is needed to jump out of `I/O dispatcher` thread
         .flatMap(Flux::fromIterable, 1)
         .doOnCancel(() -> LOG.debug("Ccancelling"))
         .doOnComplete(() -> LOG.debug("Ccomplete"))

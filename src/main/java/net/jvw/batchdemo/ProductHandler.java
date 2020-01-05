@@ -11,8 +11,6 @@ import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.reactive.function.BodyInserters;
 import org.springframework.web.reactive.function.server.ServerResponse;
 import reactor.core.publisher.Mono;
-import reactor.core.scheduler.Scheduler;
-import reactor.core.scheduler.Schedulers;
 
 import java.time.Duration;
 
@@ -25,8 +23,6 @@ public class ProductHandler {
   private ProductRepository repository;
 
   private ProductRepositoryConnectableFlux repositoryConnectableFlux;
-
-  public static final Scheduler NBE_SCHEDULER = Schedulers.newBoundedElastic(10, 10_000, "nbe-jvw");
 
   public ProductHandler(ProductRepository repository, ProductRepositoryConnectableFlux repositoryConnectableFlux) {
     this.repository = repository;
@@ -60,7 +56,7 @@ public class ProductHandler {
     LOG.debug("upsert");
 
     return repositoryConnectableFlux.get(update.getId())
-        .publishOn(NBE_SCHEDULER) // 15-dec-19 @ 16:58 -> otherwise prcf
+//        .publishOn(NBE_SCHEDULER) // 15-dec-19 @ 16:58 -> otherwise prcf
         .timeout(Duration.ofMillis(5000))
         .doOnNext(product -> {
           LOG.trace("transforming product: {}", product);
@@ -73,7 +69,7 @@ public class ProductHandler {
                 .<Product>create(sink -> {
                   repository.updateAsync(product, sink);
                 })
-                .publishOn(NBE_SCHEDULER) // 15-dec-19 @ 16:52 jump back after update
+//                .publishOn(NBE_SCHEDULER) // 15-dec-19 @ 16:52 jump back after update
         )
         .doOnNext(product -> {})
         ;
