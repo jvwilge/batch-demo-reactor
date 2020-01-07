@@ -22,7 +22,7 @@ public class ProductRepositoryConnectableFlux {
 
   private ConnectableFlux<Product> connectableFlux;
   private Disposable connectionToConnectableFlux;
-  private AtomicReference<FluxSink<Long>> fluxSink = new AtomicReference<>();
+  private AtomicReference<FluxSink<Long>> input = new AtomicReference<>();
 
   private ProductRepository repository;
 
@@ -32,7 +32,7 @@ public class ProductRepositoryConnectableFlux {
 
   @PostConstruct
   public void init() {
-    connectableFlux = Flux.create(fluxSink::set, FluxSink.OverflowStrategy.ERROR)
+    connectableFlux = Flux.create(input::set, FluxSink.OverflowStrategy.ERROR)
         .bufferTimeout(5, Duration.ofMillis(50))
         .doOnNext(ids -> LOG.debug("processing buffer of size {}", ids.size()))
         .concatMap(ids ->
@@ -56,13 +56,13 @@ public class ProductRepositoryConnectableFlux {
 
   public Mono<Product> get(Long id) {
     return connectableFlux
-        .filter(product -> id.equals(product.getId())) // connectableFlux contains all results from batch, filter on id
-        .next() // basically a take(1) that converts to mono : https://stackoverflow.com/questions/42021559/convert-from-flux-to-mono
         .doOnSubscribe(ignore -> {
           // send id to connectableFlux so it will be included in a batch
           // send id in onSubscribe or otherwise the result might arrive before the actual subscribe()
-          fluxSink.get().next(id);
-        });
+          input.get().next(id);
+        })
+        .filter(product -> id.equals(product.getId())) // connectableFlux contains all results from batch, filter on id
+        .next(); // basically a take(1) that converts to mono : https://stackoverflow.com/questions/42021559/convert-from-flux-to-mono
   }
 
 }
